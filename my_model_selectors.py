@@ -76,8 +76,26 @@ class SelectorBIC(ModelSelector):
         """
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-        # TODO implement model selection based on BIC scores
-        raise NotImplementedError
+        best_score = float('inf')
+        best_model = None
+        for number_of_components in range(self.min_n_components, self.max_n_components+1):
+            try:
+                model = GaussianHMM(n_components=number_of_components, n_iter=1000).fit(self.X, self.lengths)
+                logL = model.score(self.X, self.lengths)
+                # number of free parameters = p = n * (n - 1) + (n - 1) + 2 * d * n = n ^ 2 + 2 * d * n - 1
+                # number of features = d
+                # number of HMM states = n
+                p = number_of_components ** 2 + 2 * len(self.X[0]) * number_of_components - 1
+                n = len(self.X)
+                score = -2 * logL + p * np.log(n)
+                # compare total score from this iteration of foldings to best score
+                if score < best_score:
+                    best_score = score
+                    best_model = model
+            except:
+                pass
+
+        return best_model
 
 
 class SelectorDIC(ModelSelector):
@@ -92,8 +110,30 @@ class SelectorDIC(ModelSelector):
     def select(self):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-        # TODO implement model selection based on DIC scores
-        raise NotImplementedError
+        best_score = float('-inf')
+        best_model = None
+        for number_of_components in range(self.min_n_components, self.max_n_components+1):
+            log_this_word = float('-inf')
+            log_other = 0  # will use to keep the sums likelihoods of other words
+            for word in self.hwords:
+                x, lengths = self.hwords[word]
+
+                try:
+                    model = GaussianHMM(n_components=number_of_components, n_iter=1000).fit(x, lengths)
+                    if word == self.this_word:
+                        log_this_word = model.score(x, lengths)
+                    else:
+                        log_other += model.score(x, lengths)
+                except:
+                    pass
+
+            score = log_this_word - log_other/(len(self.hwords)-1)
+            # compare total score from this iteration of foldings to best score
+            if score > best_score:
+                best_score = score
+                best_model = model
+
+        return best_model
 
 
 class SelectorCV(ModelSelector):
@@ -104,5 +144,36 @@ class SelectorCV(ModelSelector):
     def select(self):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-        # TODO implement model selection using CV
-        raise NotImplementedError
+        split_method = KFold()
+        best_score = float('-inf')
+        best_number = 0
+        counter = 0
+        for number_of_components in range(self.min_n_components, self.max_n_components+1):
+            total_score = 0
+            try:
+                for cv_train_idx, cv_test_idx in split_method.split(self.sequences):
+                    # build model based on cv_train_idx indices
+                    # create new sequence based on train indices
+                    x_train, lengths_train = combine_sequences(cv_train_idx, self.sequences)
+                    model = GaussianHMM(n_components=number_of_components, n_iter=1000).fit(x_train, lengths_train)
+
+                    # test on test indices
+                    # create new sequence by combining train indices together
+                    x_test, lengths_test = combine_sequences(cv_test_idx, self.sequences)
+                    score = model.score(x_test, lengths_test)
+
+                    # sum all scores for this iteration of foldings
+                    total_score += score
+                    counter += 1
+            except:
+                pass
+
+            #  compare average score from this iteration of foldings to best score
+            if counter == 0:
+                counter = 1
+            average_score = total_score/counter
+            if average_score > best_score:
+                best_score = average_score
+                best_number = number_of_components
+
+        return self.base_model(best_number)
